@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dots & Boxes vs AI (49 Boxes!) 🤖</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%); 
+      min-height: 100vh; 
+      color: white; 
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    .game-card {
+      background: rgba(255,255,255,0.15);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 24px;
+      box-shadow: 0 30px 60px rgba(0,0,0,0.3);
+    }
+    #board-svg {
+      max-width: 100%;
+      height: 650px;
+      max-height: 85vh;
+      border-radius: 20px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+    }
+    #status {
+      font-size: 1.8rem;
+      font-weight: bold;
+      min-height: 3rem;
+    }
+    .score-display {
+      font-size: 2.5rem;
+      font-weight: 900;
+    }
+    @media (max-width: 576px) {
+      #board-svg { height: 70vh; }
+      .score-display { font-size: 2rem; }
+      #status { font-size: 1.5rem; }
+    }
+  </style>
+</head>
+<body class="d-flex align-items-center justify-content-center min-vh-100 p-3">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-12 col-md-10 col-lg-9">
+        <div class="game-card p-4 p-md-5 text-center">
+          <h1 class="display-3 fw-bold mb-4">Dots & Boxes vs AI (7x7 = 49 Boxes!) 🤖</h1>
+          <p class="lead fs-4 mb-4">Click lines between dots. Complete box = <strong>1 point + extra turn</strong>! AI plays smart.</p>
+          
+          <div class="row mb-5">
+            <div class="col-md-6">
+              <div class="score-display text-success">You: <span id="playerScore">0</span></div>
+            </div>
+            <div class="col-md-6">
+              <div class="score-display text-warning">AI: <span id="aiScore">0</span></div>
+            </div>
+          </div>
+
+          <svg id="board-svg" viewBox="0 0 680 680" preserveAspectRatio="xMidYMid meet"></svg>
+
+          <div id="status" class="mt-4 fs-2 fw-bold text-success">Your turn! Click a line 👆</div>
+
+          <button id="resetBtn" class="btn btn-light btn-lg px-5 py-3 mt-4 fs-4 fw-bold shadow-lg">
+            New Game 🔄
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Game constants for 7x7 boxes (49 total!)
+    const BOX_SIZE = 7;
+    const ROWS = BOX_SIZE + 1; // 8
+    const COLS = ROWS; // 8
+    const BOX_ROWS = BOX_SIZE;
+    const BOX_COLS = BOX_SIZE;
+    const MARGIN = 40;
+    const DOT_SPACING = 80;
+    const DOT_RADIUS = 7;
+    const LINE_WIDTH = 14;
+    const LINE_WIDTH_DRAWN = 18;
+
+    // Game state
+    let hLines = Array(ROWS).fill().map(() => Array(BOX_COLS).fill(false));
+    let vLines = Array(COLS).fill().map(() => Array(BOX_ROWS).fill(false));
+    let boxes = Array(BOX_ROWS).fill().map(() => Array(BOX_COLS).fill(null));
+    let playerBoxes = 0;
+    let aiBoxes = 0;
+    let gameActive = true;
+    let currentPlayer = 'X';
+
+    // SVG elements
+    let lineSVGs = { h: [], v: [] };
+    let boxSVGs = [];
+
+    const svg = document.getElementById('board-svg');
+    const statusEl = document.getElementById('status');
+    const playerScoreEl = document.getElementById('playerScore');
+    const aiScoreEl = document.getElementById('aiScore');
+    const resetBtn = document.getElementById('resetBtn');
+
+    function getBoxSides(br, bc) {
+      return (hLines[br][bc] ? 1 : 0) +
+             (hLines[br + 1][bc] ? 1 : 0) +
+             (vLines[bc][br] ? 1 : 0) +
+             (vLines[bc + 1][br] ? 1 : 0);
+    }
+
+    function countThreeSided() {
+      let threats = 0;
+      for (let br = 0; br < BOX_ROWS; br++) {
+        for (let bc = 0; bc < BOX_COLS; bc++) {
+          if (boxes[br][bc] === null && getBoxSides(br, bc) === 3) {
+            threats++;
+          }
+        }
+      }
+      return threats;
+    }
+
+    function isComplete(br, bc) {
+      return getBoxSides(br, bc) === 4;
+    }
+
+    // Init board
+    function initBoard() {
+      svg.innerHTML = '';
+
+      // Dots
+      for (let i = 0; i < ROWS; i++) {
+        for (let j = 0; j < COLS; j++) {
+          const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          dot.setAttribute("cx", MARGIN + j * DOT_SPACING);
+          dot.setAttribute("cy", MARGIN + i * DOT_SPACING);
+          dot.setAttribute("r", DOT_RADIUS);
+          dot.setAttribute("fill", "#ffffff");
+          dot.setAttribute("stroke", "#333");
+          dot.setAttribute("stroke-width", "2.5");
+          svg.appendChild(dot);
+        }
+      }
+
+      // Horizontal lines
+      lineSVGs.h = Array(ROWS).fill().map(() => []);
+      for (let r = 0; r < ROWS; r++) {
+        for (let s = 0; s < BOX_COLS; s++) {
+          const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line.setAttribute("x1", MARGIN + s * DOT_SPACING);
+          line.setAttribute("y1", MARGIN + r * DOT_SPACING);
+          line.setAttribute("x2", MARGIN + (s + 1) * DOT_SPACING);
+          line.setAttribute("y2", MARGIN + r * DOT_SPACING);
+          line.setAttribute("stroke", "rgba(255,255,255,0.5)");
+          line.setAttribute("stroke-width", LINE_WIDTH);
+          line.setAttribute("stroke-linecap", "round");
+          line.style.cursor = "pointer";
+          line.dataset.type = "h";
+          line.dataset.row = r;
+          line.dataset.seg = s;
+          line.addEventListener("click", handleLineClick);
+          svg.appendChild(line);
+          lineSVGs.h[r][s] = line;
+        }
+      }
+
+      // Vertical lines
+      lineSVGs.v = Array(COLS).fill().map(() => []);
+      for (let c = 0; c < COLS; c++) {
+        for (let s = 0; s < BOX_ROWS; s++) {
+          const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line.setAttribute("x1", MARGIN + c * DOT_SPACING);
+          line.setAttribute("y1", MARGIN + s * DOT_SPACING);
+          line.setAttribute("x2", MARGIN + c * DOT_SPACING);
+          line.setAttribute("y2", MARGIN + (s + 1) * DOT_SPACING);
+          line.setAttribute("stroke", "rgba(255,255,255,0.5)");
+          line.setAttribute("stroke-width", LINE_WIDTH);
+          line.setAttribute("stroke-linecap", "round");
+          line.style.cursor = "pointer";
+          line.dataset.type = "v";
+          line.dataset.col = c;
+          line.dataset.seg = s;
+          line.addEventListener("click", handleLineClick);
+          svg.appendChild(line);
+          lineSVGs.v[c][s] = line;
+        }
+      }
+
+      // Box rects (behind lines for fill)
+      boxSVGs = Array(BOX_ROWS).fill().map(() => []);
+      for (let br = 0; br < BOX_ROWS; br++) {
+        for (let bc = 0; bc < BOX_COLS; bc++) {
+          const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          rect.setAttribute("x", MARGIN + bc * DOT_SPACING + 4);
+          rect.setAttribute("y", MARGIN + br * DOT_SPACING + 4);
+          rect.setAttribute("width", DOT_SPACING - 8);
+          rect.setAttribute("height", DOT_SPACING - 8);
+          rect.setAttribute("rx", "8");
+          rect.setAttribute("fill", "transparent");
+          rect.setAttribute("stroke", "none");
+          svg.appendChild(rect);
+          boxSVGs[br][bc] = rect;
+        }
+      }
+    }
+
+    function tryMove(isH, fix, seg, player) {
+      let completedBoxes = [];
+      let comp = 0;
+
+      if (isH) {
+        if (hLines[fix][seg]) return { comp: 0, completedBoxes: [] };
+        hLines[fix][seg] = true;
+        if (fix > 0) {
+          const br = fix - 1;
+          const bc = seg;
+          if (isComplete(br, bc) && boxes[br][bc] === null) {
+            boxes[br][bc] = player;
+            if (player === 'X') playerBoxes++;
+            else aiBoxes++;
+            completedBoxes.push({ br, bc });
+            comp++;
+          }
+        }
+        if (fix < ROWS - 1) {
+          const br = fix;
+          const bc = seg;
+          if (isComplete(br, bc) && boxes[br][bc] === null) {
+            boxes[br][bc] = player;
+            if (player === 'X') playerBoxes++;
+            else aiBoxes++;
+            completedBoxes.push({ br, bc });
+            comp++;
+          }
+        }
+      } else {
+        if (vLines[fix][seg]) return { comp: 0, completedBoxes: [] };
+        vLines[fix][seg] = true;
+        if (fix > 0) {
+          const bc = fix - 1;
+          const br = seg;
+          if (isComplete(br, bc) && boxes[br][bc] === null) {
+            boxes[br][bc] = player;
+            if (player === 'X') playerBoxes++;
+            else aiBoxes++;
+            completedBoxes.push({ br, bc });
+            comp++;
+          }
+        }
+        if (fix < COLS - 1) {
+          const bc = fix;
+          const br = seg;
+          if (isComplete(br, bc) && boxes[br][bc] === null) {
+            boxes[br][bc] = player;
+            if (player === 'X') playerBoxes++;
+            else aiBoxes++;
+            completedBoxes.push({ br, bc });
+            comp++;
+          }
+        }
+      }
+      return { comp, completedBoxes };
+    }
+
+    function undoMove(isH, fix, seg, completedBoxes, player) {
+      if (isH) {
+        hLines[fix][seg] = false;
+      } else {
+        vLines[fix][seg] = false;
+      }
+      for (let cb of completedBoxes) {
+        boxes[cb.br][cb.bc] = null;
+        if (player === 'X') playerBoxes--;
+        else aiBoxes--;
+      }
+    }
+
+    function getAllPossibleMoves() {
+      const moves = [];
+      for (let r = 0; r < ROWS; r++) {
+        for (let s = 0; s < BOX_COLS; s++) {
+          if (!hLines[r][s]) moves.push({ isH: true, fix: r, seg: s });
+        }
+      }
+      for (let c = 0; c < COLS; c++) {
+        for (let s = 0; s < BOX_ROWS; s++) {
+          if (!vLines[c][s]) moves.push({ isH: false, fix: c, seg: s });
+        }
+      }
+      return moves;
+    }
+
+    function getBestMove() {
+      const moves = getAllPossibleMoves();
+      let bestScore = -Infinity;
+      let bestMoves = [];
+
+      for (let move of moves) {
+        const result = tryMove(move.isH, move.fix, move.seg, 'O');
+        let score = result.comp * 100;  // Huge bonus for completing boxes
+
+        const threats = countThreeSided();
+        score += (threats === 0 ? 50 : -40 * threats);  // Safe moves good, threats bad
+
+        // Bonus for creating 2-sided opens
+        let twos = 0;
+        for (let br = 0; br < BOX_ROWS; br++) {
+          for (let bc = 0; bc < BOX_COLS; bc++) {
+            if (boxes[br][bc] === null && getBoxSides(br, bc) === 2) twos++;
+          }
+        }
+        score += twos * 3;  // Mild bonus
+
+        undoMove(move.isH, move.fix, move.seg, result.completedBoxes, 'O');
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestMoves = [move];
+        } else if (score === bestScore) {
+          bestMoves.push(move);
+        }
+      }
+
+      // Random among best for variety
+      return bestMoves[Math.floor(Math.random() * bestMoves.length)];
+    }
+
+    function drawLineVisual(isH, fix, seg) {
+      const line = isH ? lineSVGs.h[fix][seg] : lineSVGs.v[fix][seg];
+      line.setAttribute("stroke", "#ffffff");
+      line.setAttribute("stroke-width", LINE_WIDTH_DRAWN);
+    }
+
+    function updateBoxColors() {
+      for (let br = 0; br < BOX_ROWS; br++) {
+        for (let bc = 0; bc < BOX_COLS; bc++) {
+          const rect = boxSVGs[br][bc];
+          const owner = boxes[br][bc];
+          if (owner === 'X') {
+            rect.setAttribute("fill", "rgba(34, 197, 94, 0.7)");
+            rect.setAttribute("stroke", "#22c55e");
+            rect.setAttribute("stroke-width", "3");
+          } else if (owner === 'O') {
+            rect.setAttribute("fill", "rgba(234, 179, 8, 0.7)");
+            rect.setAttribute("stroke", "#eab308");
+            rect.setAttribute("stroke-width", "3");
+          } else {
+            rect.setAttribute("fill", "transparent");
+            rect.setAttribute("stroke", "none");
+          }
+        }
+      }
+    }
+
+    function playerMakeMove(isH, fix, seg) {
+      const result = tryMove(isH, fix, seg, 'X');
+      drawLineVisual(isH, fix, seg);
+      updateBoxColors();
+      updateScores();
+      if (result.comp > 0) {
+        statusEl.textContent = `Nice! Extra turn 🎁`;
+        statusEl.className = "mt-4 fs-2 fw-bold text-success";
+      } else {
+        currentPlayer = 'O';
+        setTimeout(aiMove, 200);
+      }
+      checkGameOver();
+    }
+
+    function aiMove() {
+      if (!gameActive || currentPlayer !== 'O') return;
+      statusEl.textContent = "AI Thinking... 🤔";
+      statusEl.className = "mt-4 fs-2 fw-bold text-info";
+      setTimeout(() => {
+        const move = getBestMove();
+        const result = tryMove(move.isH, move.fix, move.seg, 'O');
+        drawLineVisual(move.isH, move.fix, move.seg);
+        updateBoxColors();
+        updateScores();
+        if (result.comp > 0) {
+          statusEl.textContent = "AI chains! 💪";
+          statusEl.className = "mt-4 fs-2 fw-bold text-warning";
+          setTimeout(aiMove, 200);
+        } else {
+          currentPlayer = 'X';
+          updateStatus();
+        }
+        checkGameOver();
+      }, 400);
+    }
+
+    function handleLineClick(e) {
+      if (!gameActive || currentPlayer !== 'X') return;
+      const type = e.target.dataset.type;
+      const fix = parseInt(type === 'h' ? e.target.dataset.row : e.target.dataset.col);
+      const seg = parseInt(e.target.dataset.seg);
+      const isH = type === 'h';
+      playerMakeMove(isH, fix, seg);
+    }
+
+    function checkGameOver() {
+      if (getAllPossibleMoves().length === 0) {
+        gameActive = false;
+        let msg;
+        let cls;
+        if (playerBoxes > aiBoxes) {
+          msg = "🎉 You Win!";
+          cls = "text-success";
+        } else if (aiBoxes > playerBoxes) {
+          msg = "🤖 AI Wins!";
+          cls = "text-warning";
+        } else {
+          msg = "🤝 Perfect Draw!";
+          cls = "text-info";
+        }
+        statusEl.innerHTML = `Game Over! ${msg}<br><strong>Final: You ${playerBoxes} - AI ${aiBoxes}</strong>`;
+        statusEl.className = `mt-4 fs-2 fw-bold ${cls}`;
+        return true;
+      }
+      return false;
+    }
+
+    function updateScores() {
+      playerScoreEl.textContent = playerBoxes;
+      aiScoreEl.textContent = aiBoxes;
+    }
+
+    function updateStatus() {
+      if (!gameActive) return;
+      if (currentPlayer === 'X') {
+        statusEl.textContent = "Your turn! 👆";
+        statusEl.className = "mt-4 fs-2 fw-bold text-success";
+      }
+    }
+
+    function resetVisuals() {
+      for (let r = 0; r < ROWS; r++) {
+        for (let s = 0; s < BOX_COLS; s++) {
+          const line = lineSVGs.h[r][s];
+          line.setAttribute("stroke", "rgba(255,255,255,0.5)");
+          line.setAttribute("stroke-width", LINE_WIDTH);
+        }
+      }
+      for (let c = 0; c < COLS; c++) {
+        for (let s = 0; s < BOX_ROWS; s++) {
+          const line = lineSVGs.v[c][s];
+          line.setAttribute("stroke", "rgba(255,255,255,0.5)");
+          line.setAttribute("stroke-width", LINE_WIDTH);
+        }
+      }
+      updateBoxColors();
+    }
+
+    function resetGame() {
+      hLines = Array(ROWS).fill().map(() => Array(BOX_COLS).fill(false));
+      vLines = Array(COLS).fill().map(() => Array(BOX_ROWS).fill(false));
+      boxes = Array(BOX_ROWS).fill().map(() => Array(BOX_COLS).fill(null));
+      playerBoxes = 0;
+      aiBoxes = 0;
+      gameActive = true;
+      currentPlayer = 'X';
+      resetVisuals();
+      updateScores();
+      updateStatus();
+    }
+
+    // Start game
+    initBoard();
+    updateStatus();
+    resetBtn.addEventListener('click', resetGame);
+  </script>
+</body>
+</html>
